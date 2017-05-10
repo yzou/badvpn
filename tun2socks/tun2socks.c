@@ -311,9 +311,6 @@ static void lwip_init_job_hadler (void *unused);
 static void tcp_timer_handler (void *unused);
 static void device_error_handler (void *unused);
 static void device_read_handler_send (void *unused, uint8_t *data, int data_len);
-#ifdef ANDROID
-static int process_device_dns_packet (uint8_t *data, int data_len);
-#endif
 static int process_device_udp_packet (uint8_t *data, int data_len);
 static err_t netif_init_func (struct netif *netif);
 static err_t netif_output_func (struct netif *netif, struct pbuf *p, ip_addr_t *ipaddr);
@@ -595,7 +592,7 @@ int main (int argc, char **argv)
 
         // init udpgw client
         if (!SocksUdpGwClient_Init(&udpgw_client, udp_mtu, DEFAULT_UDPGW_MAX_CONNECTIONS, options.udpgw_connection_buffer_size, UDPGW_KEEPALIVE_TIME,
-                                   socks_server_addr, socks_auth_info, socks_num_auth_info,
+                                   socks_server_addr, dnsgw, socks_auth_info, socks_num_auth_info,
                                    udpgw_remote_server_addr, UDPGW_RECONNECT_TIME, &ss, NULL, udpgw_client_handler_received
         )) {
             BLog(BLOG_ERROR, "SocksUdpGwClient_Init failed");
@@ -1321,13 +1318,6 @@ void device_read_handler_send (void *unused, uint8_t *data, int data_len)
     // accept packet
     PacketPassInterface_Done(&device_read_interface);
 
-#ifdef ANDROID
-    // process DNS directly
-    if (process_device_dns_packet(data, data_len)) {
-        return;
-    }
-#endif
-
     // process UDP directly
     if (process_device_udp_packet(data, data_len)) {
         return;
@@ -1353,152 +1343,6 @@ void device_read_handler_send (void *unused, uint8_t *data, int data_len)
         pbuf_free(p);
     }
 }
-
-#ifdef ANDROID
-int process_device_dns_packet (uint8_t *data, int data_len)
-{
-    ASSERT(data_len >= 0)
-
-    // do nothing if we don't have dnsgw
-    if (!options.dnsgw) {
-        goto fail;
-    }
-
-    static int init = 0;
-
-    int to_dns;
-    int from_dns;
-    int packet_length = 0;
-
-    uint8_t ip_version = 0;
-    if (data_len > 0) {
-        ip_version = (data[0] >> 4);
-    }
-
-    switch (ip_version) {
-        case 4: {
-            // ignore non-UDP packets
-            if (data_len < sizeof(struct ipv4_header) || data[offsetof(struct ipv4_header, protocol)] != IPV4_PROTOCOL_UDP) {
-                goto fail;
-            }
-
-            // parse IPv4 header
-            struct ipv4_header ipv4_header;
-            if (!ipv4_check(data, data_len, &ipv4_header, &data, &data_len)) {
-                goto fail;
-            }
-
-            // parse UDP
-            struct udp_header udp_header;
-            if (!udp_check(data, data_len, &udp_header, &data, &data_len)) {
-                goto fail;
-            }
-
-            // verify UDP checksum
-            uint16_t checksum_in_packet = udp_header.checksum;
-            udp_header.checksum = 0;
-            uint16_t checksum_computed = udp_checksum(&udp_header, data, data_len, ipv4_header.source_address, ipv4_header.destination_address);
-            if (checksum_in_packet != checksum_computed) {
-                goto fail;
-            }
-
-            // to port 53 is considered a DNS packet
-            to_dns = udp_header.dest_port == hton16(53);
-
-            // from port 8153 is considered a DNS packet
-            from_dns = udp_header.source_port == dnsgw.ipv4.port;
-
-            // if not DNS packet, just bypass it.
-            if (!to_dns && !from_dns) {
-                goto fail;
-            }
-
-            // modify DNS packet
-            if (to_dns) {
-                BLog(BLOG_INFO, "UDP: to DNS %d bytes", data_len);
-
-                // construct addresses
-                if (!init) {
-                    init = 1;
-                    BAVL_Init(&connections_tree, OFFSET_DIFF(Connection, port, connections_tree_node), (BAVL_comparator)conaddr_comparator, NULL);
-                }
-                BAddr local_addr;
-                BAddr remote_addr;
-                BAddr_InitIPv4(&local_addr, ipv4_header.source_address, udp_header.source_port);
-                BAddr_InitIPv4(&remote_addr, ipv4_header.destination_address, udp_header.dest_port);
-                insert_connection(local_addr, remote_addr, udp_header.source_port);
-
-                // build IP header
-                ipv4_header.destination_address = dnsgw.ipv4.ip;
-                ipv4_header.source_address = netif_ipaddr.ipv4;
-
-                // build UDP header
-                udp_header.dest_port = dnsgw.ipv4.port;
-
-            } else if (from_dns) {
-
-                // if not initialized
-                if (!init) {
-                    goto fail;
-                }
-
-                BLog(BLOG_INFO, "UDP: from DNS %d bytes", data_len);
-
-                Connection * con = find_connection(udp_header.dest_port);
-                if (con != NULL)
-                {
-                    // build IP header
-                    ipv4_header.source_address = con->remote_addr.ipv4.ip;
-                    ipv4_header.destination_address = con->local_addr.ipv4.ip;
-
-                    // build UDP header
-                    udp_header.source_port = con->remote_addr.ipv4.port;
-
-                    remove_connection(con);
-
-                }
-                else
-                {
-                    goto fail;
-                }
-            }
-
-            // update IPv4 header's checksum
-            ipv4_header.checksum = hton16(0);
-            ipv4_header.checksum = ipv4_checksum(&ipv4_header, NULL, 0);
-
-            // update UDP header's checksum
-            udp_header.checksum = hton16(0);
-            udp_header.checksum = udp_checksum(&udp_header, data, data_len,
-                    ipv4_header.source_address, ipv4_header.destination_address);
-
-            // write packet
-            memcpy(device_write_buf, &ipv4_header, sizeof(ipv4_header));
-            memcpy(device_write_buf + sizeof(ipv4_header), &udp_header, sizeof(udp_header));
-            memcpy(device_write_buf + sizeof(ipv4_header) + sizeof(udp_header), data, data_len);
-            packet_length = sizeof(ipv4_header) + sizeof(udp_header) + data_len;
-
-        } break;
-
-        case 6: {
-            // TODO: support IPv6 DNS Gateway
-            goto fail;
-        } break;
-
-        default: {
-            goto fail;
-        } break;
-    }
-
-    // submit packet
-    BTap_Send(&device, device_write_buf, packet_length);
-
-    return 1;
-
-fail:
-    return 0;
-}
-#endif
 
 int process_device_udp_packet (uint8_t *data, int data_len)
 {
@@ -1553,9 +1397,7 @@ int process_device_udp_packet (uint8_t *data, int data_len)
 
             // if transparent DNS is enabled, any packet arriving at out netif
             // address to port 53 is considered a DNS packet
-            is_dns = (options.udpgw_transparent_dns &&
-                      ipv4_header.destination_address == netif_ipaddr.ipv4 &&
-                      udp_header.dest_port == hton16(53));
+            is_dns = (options.dnsgw && udp_header.dest_port == hton16(53));
         } break;
 
         case 6: {
