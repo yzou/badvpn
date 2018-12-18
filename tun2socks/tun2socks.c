@@ -388,6 +388,82 @@ static void daemonize(const char* path) {
 }
 #endif
 
+
+#ifdef __ANDROID__
+int wait_for_fd()
+{
+    int fd, sock;
+    struct sockaddr_un addr;
+
+    if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
+        BLog(BLOG_ERROR, "socket() failed: %s (socket sock = %d)\n", strerror(errno), sock);
+        return -1;
+    }
+
+    int flags;
+    if (-1 == (flags = fcntl(fd, F_GETFL, 0))) {
+            flags = 0;
+    }
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+    char *path = "/data/data/com.github.shadowsocks/sock_path";
+    if (options.sock_path != NULL) {
+        path = options.sock_path;
+    }
+    unlink(path);
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path)-1);
+
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+        BLog(BLOG_ERROR, "bind() failed: %s (sock = %d)\n", strerror(errno), sock);
+        close(sock);
+        return -1;
+    }
+
+    if (listen(sock, 5) == -1) {
+        BLog(BLOG_ERROR, "listen() failed: %s (sock = %d)\n", strerror(errno), sock);
+        close(sock);
+        return -1;
+    }
+
+    fd_set set;
+    FD_ZERO (&set);
+    FD_SET (sock, &set);
+
+    struct timeval tv = {10, 0};
+
+    for (;;) {
+        if (select(sock + 1, &set, NULL, NULL, &tv) < 0) {
+            BLog(BLOG_ERROR, "select() failed: %s\n", strerror(errno));
+            break;
+        }
+
+        int sock2;
+        struct sockaddr_un remote;
+        int t = sizeof(remote);
+        if ((sock2 = accept(sock, (struct sockaddr *)&remote, &t)) == -1) {
+            BLog(BLOG_ERROR, "accept() failed: %s (sock = %d)\n", strerror(errno), sock);
+            break;
+        }
+
+        if (ancil_recv_fd(sock2, &fd)) {
+            BLog(BLOG_ERROR, "ancil_recv_fd: %s (sock = %d)\n", strerror(errno), sock2);
+            close(sock2);
+            break;
+        } else {
+            close(sock2);
+            BLog(BLOG_INFO, "received fd = %d", fd);
+            break;
+        }
+    }
+
+    close(sock);
+
+    return fd;
+}
+#endif
+
 int main (int argc, char **argv)
 {
     if (argc <= 0) {
@@ -451,6 +527,13 @@ int main (int argc, char **argv)
     BLog(BLOG_NOTICE, "initializing "GLOBAL_PRODUCT_NAME" "PROGRAM_NAME" "GLOBAL_VERSION);
 
 #ifdef __ANDROID__
+    // wait for the file descriptor sent from JVM
+    int fd = wait_for_fd();
+
+    if (fd == -1) {
+        goto fail1;
+    }
+
     if (options.pid) {
         daemonize(options.pid);
     }
@@ -490,56 +573,6 @@ int main (int argc, char **argv)
     }
 
 #ifdef __ANDROID__
-    // use supplied file descriptor
-
-    int sock, fd;
-    struct sockaddr_un addr;
-
-    if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
-        BLog(BLOG_ERROR, "socket() failed: %s (socket sock = %d)\n", strerror(errno), sock);
-        goto fail2;
-    }
-
-    char *path = "/data/data/com.github.shadowsocks/sock_path";
-    if (options.sock_path != NULL) {
-        path = options.sock_path;
-    }
-    unlink(path);
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, path, sizeof(addr.sun_path)-1);
-
-    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-        BLog(BLOG_ERROR, "bind() failed: %s (sock = %d)\n", strerror(errno), sock);
-        close(sock);
-        goto fail2;
-    }
-
-    if (listen(sock, 5) == -1) {
-        BLog(BLOG_ERROR, "listen() failed: %s (sock = %d)\n", strerror(errno), sock);
-        close(sock);
-        goto fail2;
-    }
-
-    for (;;) {
-        int sock2;
-        struct sockaddr_un remote;
-        int t = sizeof(remote);
-        if ((sock2 = accept(sock, (struct sockaddr *)&remote, &t)) == -1) {
-            BLog(BLOG_ERROR, "accept() failed: %s (sock = %d)\n", strerror(errno), sock);
-            continue;
-        }
-        if (ancil_recv_fd(sock2, &fd)) {
-            BLog(BLOG_ERROR, "ancil_recv_fd: %s (sock = %d)\n", strerror(errno), sock2);
-            close(sock2);
-        } else {
-            close(sock2);
-            BLog(BLOG_INFO, "received fd = %d", fd);
-            break;
-        }
-    }
-    close(sock);
-
     struct BTap_init_data init_data;
     init_data.dev_type = BTAP_DEV_TUN;
     init_data.init_type = BTAP_INIT_FD;
