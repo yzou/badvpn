@@ -87,7 +87,6 @@ typedef struct {
     BPending first_job;
     const uint8_t *first_data;
     int first_data_len;
-    int is_bypass;
     int is_dns;
     BDatagram udp_dgram;
     BufferWriter udp_send_writer;
@@ -104,6 +103,6 @@ int SocksUdpGwClient_Init (SocksUdpGwClient *o, int udp_mtu, int max_connections
                            BAddr remote_udpgw_addr, btime_t reconnect_time, BReactor *reactor, void *user,
                            SocksUdpGwClient_handler_received handler_received) WARN_UNUSED;
 void SocksUdpGwClient_Free (SocksUdpGwClient *o);
-void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr remote_addr, int is_bypass, int is_dns, const uint8_t *data, int data_len);
+void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr remote_addr, int is_dns, const uint8_t *data, int data_len);
 
 #endif

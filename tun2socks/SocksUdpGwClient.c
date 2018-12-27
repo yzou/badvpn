@@ -35,9 +35,6 @@
 
 #ifdef __ANDROID__
 
-#include <ancillary.h>
-#include <sys/prctl.h>
-#include <sys/un.h>
 #include <misc/socks_proto.h>
 #define CONNECTION_UDP_BUFFER_SIZE 1
 
@@ -57,57 +54,11 @@ static void dgram_handler (SocksUdpGwClient_connection *o, int event);
 static void dgram_handler_received (SocksUdpGwClient_connection *o, uint8_t *data, int data_len);
 static int conaddr_comparator (void *unused, SocksUdpGwClient_conaddr *v1, SocksUdpGwClient_conaddr *v2);
 static SocksUdpGwClient_connection * find_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr);
-static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr, int is_bypass, int is_dns);
+static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr);
 static void connection_send (SocksUdpGwClient_connection *o, const uint8_t *data, int data_len);
 static void connection_first_job_handler (SocksUdpGwClient_connection *con);
-static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, SocksUdpGwClient_conaddr conaddr, const uint8_t *data, int data_len, int is_bypass, int is_dns);
+static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, SocksUdpGwClient_conaddr conaddr, const uint8_t *data, int data_len, int is_dns);
 static void connection_free (SocksUdpGwClient_connection *o);
-static int protect_socket(int fd);
-
-static int protect_socket(int fd)
-{
-    int sock;
-    struct sockaddr_un addr;
-
-    if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
-        BLog(BLOG_ERROR, "[SocksUdpGwClient] socket() failed\n");
-        return -1;
-    }
-
-    // Set timeout to 3s
-    struct timeval tv;
-    tv.tv_sec  = 3;
-    tv.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(struct timeval));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(struct timeval));
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, "protect_path", sizeof(addr.sun_path) - 1);
-
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-        BLog(BLOG_ERROR, "[SocksUdpGwClient] connect() failed for protect_path\n");
-        close(sock);
-        return -1;
-    }
-
-    if (ancil_send_fd(sock, fd)) {
-        BLog(BLOG_ERROR, "[SocksUdpGwClient] ancil_send_fd");
-        close(sock);
-        return -1;
-    }
-
-    char ret = 0;
-
-    if (recv(sock, &ret, 1, 0) == -1) {
-        BLog(BLOG_ERROR, "[SocksUdpGwClient] ancil_recv");
-        close(sock);
-        return -1;
-    }
-
-    close(sock);
-    return ret;
-}
 
 static void dgram_handler (SocksUdpGwClient_connection *o, int event)
 {
@@ -131,7 +82,7 @@ static void dgram_handler_received (SocksUdpGwClient_connection *o, uint8_t *dat
     // accept packet
     PacketPassInterface_Done(&o->udp_recv_if);
 
-    if (!o->is_bypass) {
+    if (!o->is_dns) {
 
         // check header
         if (data_len < sizeof(struct socks_udp_header)) {
@@ -195,6 +146,10 @@ static void dgram_handler_received (SocksUdpGwClient_connection *o, uint8_t *dat
 
 static int conaddr_comparator (void *unused, SocksUdpGwClient_conaddr *v1, SocksUdpGwClient_conaddr *v2)
 {
+    int r = BAddr_CompareOrder(&v1->remote_addr, &v2->remote_addr);
+    if (r) {
+        return r;
+    }
     return BAddr_CompareOrder(&v1->local_addr, &v2->local_addr);
 }
 
@@ -208,7 +163,7 @@ static SocksUdpGwClient_connection * find_connection (SocksUdpGwClient *o, Socks
     return UPPER_OBJECT(tree_node, SocksUdpGwClient_connection, connections_tree_node);
 }
 
-static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr, int is_bypass, int is_dns)
+static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr)
 {
     ASSERT(!find_connection(o, conaddr))
     ASSERT(o->num_connections > 0)
@@ -221,10 +176,6 @@ static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, Sock
 
     // set new conaddr
     con->conaddr = conaddr;
-
-    // reinit states
-    con->is_bypass = is_bypass;
-    con->is_dns    = is_dns;
 
     // insert to connections tree by conaddr
     ASSERT_EXECUTE(BAVL_Insert(&o->connections_tree, &con->connections_tree_node, NULL))
@@ -242,7 +193,7 @@ static void connection_send (SocksUdpGwClient_connection *o, const uint8_t *data
     }
     int out_pos = 0;
 
-    if (!o->is_bypass) {
+    if (!o->is_dns) {
 
         // write header
         BAddr remote_addr = o->conaddr.remote_addr;
@@ -289,7 +240,7 @@ static void connection_first_job_handler (SocksUdpGwClient_connection *con)
     connection_send(con, con->first_data, con->first_data_len);
 }
 
-static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, SocksUdpGwClient_conaddr conaddr, const uint8_t *data, int data_len, int is_bypass, int is_dns)
+static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, SocksUdpGwClient_conaddr conaddr, const uint8_t *data, int data_len, int is_dns)
 {
     // allocate structure
     SocksUdpGwClient_connection *o = (SocksUdpGwClient_connection *) malloc(sizeof(*o));
@@ -303,7 +254,6 @@ static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, S
     o->conaddr = conaddr;
     o->first_data = data;
     o->first_data_len = data_len;
-    o->is_bypass = is_bypass;
     o->is_dns = is_dns;
 
     // init first job
@@ -315,11 +265,6 @@ static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, S
         goto fail0;
     }
 
-#ifdef __ANDROID__
-    // Protect UDP dgram
-    protect_socket(BDatagram_GetFd(&o->udp_dgram));
-#endif
-
     // set SO_REUSEADDR
     if (!BDatagram_SetReuseAddr(&o->udp_dgram, 1)) {
         BLog(BLOG_ERROR, "set SO_REUSEADDR failed");
@@ -330,14 +275,9 @@ static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, S
     BIPAddr ipaddr;
     memset(&ipaddr, 0, sizeof(ipaddr));
 
-    if (o->is_bypass) {
-        if (o->is_dns) {
-            ipaddr.type = client->dnsgw.type;
-            BDatagram_SetSendAddrs(&o->udp_dgram, client->dnsgw, ipaddr);
-        } else {
-            ipaddr.type = o->conaddr.remote_addr.type;
-            BDatagram_SetSendAddrs(&o->udp_dgram, o->conaddr.remote_addr, ipaddr);
-        }
+    if (is_dns) {
+        ipaddr.type = client->dnsgw.type;
+        BDatagram_SetSendAddrs(&o->udp_dgram, client->dnsgw, ipaddr);
     } else {
         ipaddr.type = client->socks_server_addr.type;
         BDatagram_SetSendAddrs(&o->udp_dgram, client->socks_server_addr, ipaddr);
@@ -639,7 +579,7 @@ void SocksUdpGwClient_Free (SocksUdpGwClient *o)
 #endif
 }
 
-void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr remote_addr, int is_bypass, int is_dns, const uint8_t *data, int data_len)
+void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr remote_addr, int is_dns, const uint8_t *data, int data_len)
 {
     DebugObject_Access(&o->d_obj);
     // see asserts in UdpGwClient_SubmitPacket
@@ -660,30 +600,16 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
 
     // if no connection and can't create a new one, reuse the least recently used une
     if (!con && o->num_connections == o->max_connections) {
-        con = reuse_connection(o, conaddr, is_bypass, is_dns);
+        con = reuse_connection(o, conaddr);
+
+        // reinit dns status
+        con->is_dns = is_dns;
     }
 
     if (!con) {
         // create new connection
-        con = connection_init(o, conaddr, data, data_len, is_bypass, is_dns);
+        con = connection_init(o, conaddr, data, data_len, is_dns);
     } else {
-        // set UDP dgram send address
-        BIPAddr ipaddr;
-        memset(&ipaddr, 0, sizeof(ipaddr));
-
-        if (con->is_bypass) {
-            if (con->is_dns) {
-                ipaddr.type = o->dnsgw.type;
-                BDatagram_SetSendAddrs(&con->udp_dgram, o->dnsgw, ipaddr);
-            } else {
-                ipaddr.type = con->conaddr.remote_addr.type;
-                BDatagram_SetSendAddrs(&con->udp_dgram, con->conaddr.remote_addr, ipaddr);
-            }
-        } else {
-            ipaddr.type = o->socks_server_addr.type;
-            BDatagram_SetSendAddrs(&con->udp_dgram, o->socks_server_addr, ipaddr);
-        }
-
         // move connection to front of the list
         LinkedList1_Remove(&o->connections_list, &con->connections_list_node);
         LinkedList1_Append(&o->connections_list, &con->connections_list_node);
@@ -693,7 +619,7 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
     }
 #else
     // submit to udpgw client
-    UdpGwClient_SubmitPacket(&o->udpgw_client, local_addr, remote_addr, is_bypass, data, data_len);
+    UdpGwClient_SubmitPacket(&o->udpgw_client, local_addr, remote_addr, is_dns, data, data_len);
 #endif
 }
 

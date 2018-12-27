@@ -388,6 +388,7 @@ static void daemonize(const char* path) {
 }
 #endif
 
+
 #ifdef __ANDROID__
 int wait_for_fd()
 {
@@ -1485,7 +1486,7 @@ int process_device_udp_packet (uint8_t *data, int data_len)
     }
 
     // submit packet to udpgw
-    SocksUdpGwClient_SubmitPacket(&udpgw_client, local_addr, remote_addr, options.dnsgw != NULL, is_dns, data, data_len);
+    SocksUdpGwClient_SubmitPacket(&udpgw_client, local_addr, remote_addr, is_dns, data, data_len);
 
     return 1;
 
