@@ -601,6 +601,9 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
     // if no connection and can't create a new one, reuse the least recently used une
     if (!con && o->num_connections == o->max_connections) {
         con = reuse_connection(o, conaddr);
+
+        // reinit dns status
+        con->is_dns = is_dns;
     }
 
     if (!con) {
