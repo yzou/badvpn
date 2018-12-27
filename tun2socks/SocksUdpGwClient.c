@@ -54,7 +54,7 @@ static void dgram_handler (SocksUdpGwClient_connection *o, int event);
 static void dgram_handler_received (SocksUdpGwClient_connection *o, uint8_t *data, int data_len);
 static int conaddr_comparator (void *unused, SocksUdpGwClient_conaddr *v1, SocksUdpGwClient_conaddr *v2);
 static SocksUdpGwClient_connection * find_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr);
-static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr);
+static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr, int is_dns);
 static void connection_send (SocksUdpGwClient_connection *o, const uint8_t *data, int data_len);
 static void connection_first_job_handler (SocksUdpGwClient_connection *con);
 static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, SocksUdpGwClient_conaddr conaddr, const uint8_t *data, int data_len, int is_dns);
@@ -146,10 +146,6 @@ static void dgram_handler_received (SocksUdpGwClient_connection *o, uint8_t *dat
 
 static int conaddr_comparator (void *unused, SocksUdpGwClient_conaddr *v1, SocksUdpGwClient_conaddr *v2)
 {
-    int r = BAddr_CompareOrder(&v1->remote_addr, &v2->remote_addr);
-    if (r) {
-        return r;
-    }
     return BAddr_CompareOrder(&v1->local_addr, &v2->local_addr);
 }
 
@@ -163,7 +159,7 @@ static SocksUdpGwClient_connection * find_connection (SocksUdpGwClient *o, Socks
     return UPPER_OBJECT(tree_node, SocksUdpGwClient_connection, connections_tree_node);
 }
 
-static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr)
+static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr, int is_dns)
 {
     ASSERT(!find_connection(o, conaddr))
     ASSERT(o->num_connections > 0)
@@ -176,6 +172,20 @@ static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, Sock
 
     // set new conaddr
     con->conaddr = conaddr;
+    con->is_dns = is_dns;
+
+    // set UDP dgram send address
+    BIPAddr ipaddr;
+    memset(&ipaddr, 0, sizeof(ipaddr));
+
+    // reset remote addr
+    if (con->is_dns) {
+        ipaddr.type = o->dnsgw.type;
+        BDatagram_SetSendAddrs(&con->udp_dgram, o->dnsgw, ipaddr);
+    } else {
+        ipaddr.type = o->socks_server_addr.type;
+        BDatagram_SetSendAddrs(&con->udp_dgram, o->socks_server_addr, ipaddr);
+    }
 
     // insert to connections tree by conaddr
     ASSERT_EXECUTE(BAVL_Insert(&o->connections_tree, &con->connections_tree_node, NULL))
@@ -275,7 +285,7 @@ static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, S
     BIPAddr ipaddr;
     memset(&ipaddr, 0, sizeof(ipaddr));
 
-    if (is_dns) {
+    if (o->is_dns) {
         ipaddr.type = client->dnsgw.type;
         BDatagram_SetSendAddrs(&o->udp_dgram, client->dnsgw, ipaddr);
     } else {
@@ -600,10 +610,7 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
 
     // if no connection and can't create a new one, reuse the least recently used une
     if (!con && o->num_connections == o->max_connections) {
-        con = reuse_connection(o, conaddr);
-
-        // reinit dns status
-        con->is_dns = is_dns;
+        con = reuse_connection(o, conaddr, is_dns);
     }
 
     if (!con) {
