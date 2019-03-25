@@ -103,8 +103,10 @@ static void dgram_handler_received (SocksUdpGwClient_connection *o, uint8_t *dat
             return;
         }
 
-        // parse address
+        // remote addr parsed from header
         BAddr remote_addr;
+
+        // parse address
         if (atyp == SOCKS_ATYP_IPV6) {
             if (data_len < sizeof(struct udpgw_addr_ipv6)) {
                 BLog(BLOG_ERROR, "missing ipv6 address");
@@ -127,11 +129,14 @@ static void dgram_handler_received (SocksUdpGwClient_connection *o, uint8_t *dat
             BAddr_InitIPv4(&remote_addr, addr_ipv4.addr_ip, addr_ipv4.addr_port);
         }
 
-        // check remote addr
-        if (!BAddr_Compare(&remote_addr, &o->conaddr.remote_addr)) {
-            BLog(BLOG_ERROR, "remote addr not match");
-            return;
-        }
+        // reset remote addr
+        o->conaddr.remote_addr = remote_addr;
+
+        // print remote addr
+        char addr_str[BADDR_MAX_PRINT_LEN];
+        BAddr_Print(&remote_addr, addr_str);
+
+        BLog(BLOG_INFO, "receive packet from %s", addr_str);
     }
 
     // check remaining data
@@ -617,6 +622,9 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
         // create new connection
         con = connection_init(o, conaddr, data, data_len, is_dns);
     } else {
+        // reset remote addr
+        con->conaddr.remote_addr = remote_addr;
+
         // move connection to front of the list
         LinkedList1_Remove(&o->connections_list, &con->connections_list_node);
         LinkedList1_Append(&o->connections_list, &con->connections_list_node);
