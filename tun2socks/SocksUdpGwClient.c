@@ -132,6 +132,19 @@ static void dgram_handler_received (SocksUdpGwClient_connection *o, uint8_t *dat
             BLog(BLOG_ERROR, "remote addr not match");
             return;
         }
+    } else {
+        // get the remote addr
+        BAddr local_addr, remote_addr;
+        int ret = BDatagram_GetLastReceiveAddrs(&o->udp_dgram, &remote_addr, &local_addr);
+        if (ret) {
+            o->conaddr.remote_addr = remote_addr;
+        }
+
+        // print addr
+        char addr_str[BADDR_MAX_PRINT_LEN];
+        BAddr_Print(&remote_addr, addr_str);
+
+        BLog(BLOG_INFO, "receive packet from %s", addr_str);
     }
 
     // check remaining data
