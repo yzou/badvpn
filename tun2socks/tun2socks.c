@@ -198,7 +198,6 @@ struct {
     int udpgw_connection_buffer_size;
     int udpgw_transparent_dns;
 #ifdef __ANDROID__
-    int tun_fd;
     int tun_mtu;
     int fake_proc;
     char *sock_path;
@@ -811,7 +810,6 @@ int parse_arguments (int argc, char *argv[])
         options.loglevels[i] = -1;
     }
 #ifdef __ANDROID__
-    options.tun_fd = -1;
     options.tun_mtu = 1500;
     options.fake_proc = 0;
     options.pid = NULL;
@@ -911,17 +909,6 @@ int parse_arguments (int argc, char *argv[])
 #ifdef __ANDROID__
         else if (!strcmp(arg, "--fake-proc")) {
             options.fake_proc = 1;
-        }
-        else if (!strcmp(arg, "--tunfd")) {
-            if (1 >= argc - i) {
-                fprintf(stderr, "%s: requires an argument\n", arg);
-                return 0;
-            }
-            if ((options.tun_fd = atoi(argv[i + 1])) <= 0) {
-                fprintf(stderr, "%s: wrong argument\n", arg);
-                return 0;
-            }
-            i++;
         }
         else if (!strcmp(arg, "--tunmtu")) {
             if (1 >= argc - i) {
@@ -1086,10 +1073,12 @@ int parse_arguments (int argc, char *argv[])
         return 0;
     }
 
+#ifndef __ANDROID__
     if (!options.netif_netmask) {
         fprintf(stderr, "--netif-netmask is required\n");
         return 0;
     }
+#endif
 
     if (!options.socks_server_addr) {
         fprintf(stderr, "--socks-server-addr is required\n");
@@ -1125,6 +1114,7 @@ int process_arguments (void)
         return 0;
     }
 
+#ifndef __ANDROID__
     // resolve netif netmask
     if (!BIPAddr_Resolve(&netif_netmask, options.netif_netmask, 0)) {
         BLog(BLOG_ERROR, "netif netmask: BIPAddr_Resolve failed");
@@ -1134,6 +1124,7 @@ int process_arguments (void)
         BLog(BLOG_ERROR, "netif netmask: must be an IPv4 address");
         return 0;
     }
+#endif
 
     // parse IP6 address
     if (options.netif_ip6addr) {
