@@ -1251,7 +1251,7 @@ void lwip_init_job_hadler (void *unused)
 
     // set netif link up, otherwise ip route will refuse to route
     netif_set_link_up(&the_netif);
-    
+
     // set netif pretend TCP
     netif_set_pretend_tcp(&the_netif, 1);
 
@@ -1283,7 +1283,7 @@ void lwip_init_job_hadler (void *unused)
 
     // ensure the listener only accepts connections from this netif
     tcp_bind_netif(l, &the_netif);
-    
+
     // listen listener
     if (!(listener = tcp_listen(l))) {
         BLog(BLOG_ERROR, "tcp_listen failed");
@@ -1308,7 +1308,7 @@ void lwip_init_job_hadler (void *unused)
         }
 
         tcp_bind_netif(l_ip6, &the_netif);
-        
+
         if (!(listener_ip6 = tcp_listen(l_ip6))) {
             BLog(BLOG_ERROR, "tcp_listen failed");
             tcp_close(l_ip6);
@@ -1337,22 +1337,22 @@ void tcp_timer_handler (void *unused)
 
     // call the TCP timer function (every 1/4 second)
     tcp_tmr();
-    
+
     // increment tcp_timer_mod4
     tcp_timer_mod4 = (tcp_timer_mod4 + 1) % 4;
-    
+
     // every second, call other timer functions
     if (tcp_timer_mod4 == 0) {
 #if IP_REASSEMBLY
         ASSERT(IP_TMR_INTERVAL == 4 * TCP_TMR_INTERVAL)
         ip_reass_tmr();
 #endif
-        
+
 #if LWIP_IPV6
         ASSERT(ND6_TMR_INTERVAL == 4 * TCP_TMR_INTERVAL)
         nd6_tmr();
 #endif
-    
+
 #if LWIP_IPV6 && LWIP_IPV6_REASS
         ASSERT(IP6_REASS_TMR_INTERVAL == 4 * TCP_TMR_INTERVAL)
         ip6_reass_tmr();
@@ -1460,6 +1460,19 @@ int process_device_udp_packet (uint8_t *data, int data_len)
             // if transparent DNS is enabled, any packet arriving at out netif
             // address to port 53 is considered a DNS packet
             is_dns = (options.dnsgw && udp_header.dest_port == hton16(53));
+
+            // identify the packet to make sure it's a DNS query packet
+            // any DNS answer is not intercepted.
+            if (is_dns) {
+                if (data_len < sizeof(DnsHeader)) {
+                    // packet is too small as a DNS packet, ignored
+                    is_dns = 0;
+                } else {
+                    DnsHeader *header = (DnsHeader *)data;
+                    // A DNS query has qr bit and response code set to 0, without answer and authority entry
+                    is_dns = (header->qr == 0 && header->rcode == 0 && header->ans_count == 0 && header->auth_count == 0);
+                }
+            }
         } break;
 
         case 6: {
@@ -1778,13 +1791,13 @@ void client_abort_client (struct tcp_client *client)
 void client_abort_pcb (struct tcp_client *client)
 {
     ASSERT(!client->aborted)
-    
+
     // abort the PCB
     tcp_abort(client->pcb);
-    
+
     // mark aborted
     client->aborted = 1;
-    
+
     // kill dead_aborted with value 1 signaling that tcp_abort was done;
     // this is contrasted to killing with value -1 from client_dealloc
     // signaling that the client was freed without tcp_abort
@@ -1891,7 +1904,7 @@ err_t client_recv_func (void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t e
                           // be done with the pbuf in case of an error.
 
     DEAD_ENTER(client->dead_aborted)
-    
+
     if (!p) {
         client_log(client, BLOG_INFO, "client closed");
         client_free_client(client);
@@ -1912,7 +1925,7 @@ err_t client_recv_func (void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t e
         // free pbuff
         int p_tot_len = p->tot_len;
         pbuf_free(p);
-        
+
     // if there was nothing in the buffer before, and SOCKS is up, start send data
         if (client->buf_used == p_tot_len && client->socks_up) {
         ASSERT(!client->socks_closed) // this callback is removed when SOCKS is closed
@@ -2136,7 +2149,7 @@ err_t client_sent_func (void *arg, struct tcp_pcb *tpcb, u16_t len)
     ASSERT(len <= client->socks_recv_tcp_pending)
 
     DEAD_ENTER(client->dead_aborted)
-    
+
     // decrement pending
     client->socks_recv_tcp_pending -= len;
 
@@ -2163,7 +2176,7 @@ err_t client_sent_func (void *arg, struct tcp_pcb *tpcb, u16_t len)
             client_socks_recv_initiate(client);
             SYNC_COMMIT
     }
-    } else {    
+    } else {
     // have we sent everything after SOCKS was closed?
     if (client->socks_closed && client->socks_recv_tcp_pending == 0) {
         client_log(client, BLOG_INFO, "removing after SOCKS went down");
@@ -2173,7 +2186,7 @@ err_t client_sent_func (void *arg, struct tcp_pcb *tpcb, u16_t len)
 
 out:
     DEAD_LEAVE2(client->dead_aborted)
-    
+
     // Return ERR_ABRT if and only if tcp_abort was called from this callback.
     return (DEAD_KILLED > 0) ? ERR_ABRT : ERR_OK;
 }
