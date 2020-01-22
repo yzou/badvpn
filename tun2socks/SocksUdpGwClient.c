@@ -609,9 +609,6 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
         // create new connection
         con = connection_init(o, conaddr, is_dns);
 
-        // ignoe the packet, as we cannot create a new connection
-        if (con == NULL) return;
-
         // send the first packet
         connection_send(con, data, data_len);
     } else {
