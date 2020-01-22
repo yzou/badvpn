@@ -56,7 +56,8 @@ static int conaddr_comparator (void *unused, SocksUdpGwClient_conaddr *v1, Socks
 static SocksUdpGwClient_connection * find_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr);
 static SocksUdpGwClient_connection * reuse_connection (SocksUdpGwClient *o, SocksUdpGwClient_conaddr conaddr, int is_dns);
 static void connection_send (SocksUdpGwClient_connection *o, const uint8_t *data, int data_len);
-static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, SocksUdpGwClient_conaddr conaddr, int is_dns);
+static void connection_first_job_handler (SocksUdpGwClient_connection *con);
+static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, SocksUdpGwClient_conaddr conaddr, const uint8_t *data, int data_len, int is_dns);
 static void connection_free (SocksUdpGwClient_connection *o);
 
 static void dgram_handler (SocksUdpGwClient_connection *o, int event)
@@ -249,7 +250,12 @@ static void connection_send (SocksUdpGwClient_connection *o, const uint8_t *data
     BufferWriter_EndPacket(&o->udp_send_writer, out_pos);
 }
 
-static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, SocksUdpGwClient_conaddr conaddr, int is_dns)
+static void connection_first_job_handler (SocksUdpGwClient_connection *con)
+{
+    connection_send(con, con->first_data, con->first_data_len);
+}
+
+static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, SocksUdpGwClient_conaddr conaddr, const uint8_t *data, int data_len, int is_dns)
 {
     // allocate structure
     SocksUdpGwClient_connection *o = (SocksUdpGwClient_connection *) malloc(sizeof(*o));
@@ -261,7 +267,13 @@ static SocksUdpGwClient_connection *connection_init (SocksUdpGwClient *client, S
     // init arguments
     o->client = client;
     o->conaddr = conaddr;
+    o->first_data = data;
+    o->first_data_len = data_len;
     o->is_dns = is_dns;
+
+    // init first job
+    BPending_Init(&o->first_job, BReactor_PendingGroup(client->reactor), (BPending_handler)connection_first_job_handler, o);
+    BPending_Set(&o->first_job);
 
     // init UDP dgram
     if (!BDatagram_Init(&o->udp_dgram, client->socks_server_addr.type, client->reactor, o, (BDatagram_handler)dgram_handler)) {
@@ -331,6 +343,7 @@ fail1:
     BDatagram_Free(&o->udp_dgram);
 
 fail0:
+    BPending_Free(&o->first_job);
     free(o);
 fail:
     return NULL;
@@ -607,10 +620,7 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
 
     if (!con) {
         // create new connection
-        con = connection_init(o, conaddr, is_dns);
-
-        // send the first packet
-        connection_send(con, data, data_len);
+        con = connection_init(o, conaddr, data, data_len, is_dns);
     } else {
         // reset remote addr
         con->conaddr.remote_addr = remote_addr;
