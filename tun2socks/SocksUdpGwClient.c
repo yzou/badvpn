@@ -248,6 +248,8 @@ static int connection_send (SocksUdpGwClient_connection *o, const uint8_t *data,
 
     // submit written message
     BufferWriter_EndPacket(&o->udp_send_writer, out_pos);
+
+    return 0;
 }
 
 static void connection_first_job_handler (SocksUdpGwClient_connection *con)
