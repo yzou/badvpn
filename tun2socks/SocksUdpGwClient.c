@@ -36,7 +36,7 @@
 #ifdef __ANDROID__
 
 #include <misc/socks_proto.h>
-#define CONNECTION_UDP_BUFFER_SIZE 1
+#define CONNECTION_UDP_BUFFER_SIZE 256
 
 #else
 
@@ -633,6 +633,8 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
         // send packet to existing connection
         int res = connection_send(con, data, data_len);
         if (res == 1) {
+            BLog(BLOG_ERROR, "The current UDP connection is broken, recreating a new one");
+
             // free broken connection
             connection_free(con);
 
