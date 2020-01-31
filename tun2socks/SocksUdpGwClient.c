@@ -591,8 +591,6 @@ void SocksUdpGwClient_Free (SocksUdpGwClient *o)
 
 void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr remote_addr, int is_dns, const uint8_t *data, int data_len)
 {
-    BLog(BLOG_ERROR, "Submit a packet");
-
     DebugObject_Access(&o->d_obj);
     // see asserts in UdpGwClient_SubmitPacket
 
@@ -612,7 +610,6 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
 
     // if no connection and can't create a new one, reuse the least recently used une
     if (!con && o->num_connections == o->max_connections) {
-        BLog(BLOG_ERROR, "Reuse connection");
         remove_lru_connection(o, conaddr, is_dns);
     }
 
@@ -620,11 +617,7 @@ void SocksUdpGwClient_SubmitPacket (SocksUdpGwClient *o, BAddr local_addr, BAddr
         // create new connection
         con = connection_init(o, conaddr, data, data_len, is_dns);
 
-        BLog(BLOG_ERROR, "Create a new conncection");
-
     } else {
-        BLog(BLOG_ERROR, "Reset a conncection");
-
         // reset the connection
         reset_connection(o, con, conaddr, is_dns);
 
