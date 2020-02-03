@@ -50,7 +50,7 @@ struct _BLog_global blog_global = {0};
 static char *level_names[] = { NULL, "ERROR", "WARNING", "NOTICE", "INFO", "DEBUG" };
 
 #ifdef __ANDROID__
-static int android_log_level_map[] = {ANDROID_LOG_VERBOSE, ANDROID_LOG_FATAL, ANDROID_LOG_ERROR,
+static int android_log_level_map[] = {ANDROID_LOG_FATAL, ANDROID_LOG_ERROR, ANDROID_LOG_WARN,
                                 ANDROID_LOG_WARN, ANDROID_LOG_INFO, ANDROID_LOG_DEBUG
                                 };
 #endif
