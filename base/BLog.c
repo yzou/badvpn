@@ -49,12 +49,18 @@ struct _BLog_global blog_global = {0};
 // keep in sync with level numbers in BLog.h!
 static char *level_names[] = { NULL, "ERROR", "WARNING", "NOTICE", "INFO", "DEBUG" };
 
+#ifdef __ANDROID__
+static int android_log_level_map[] = {ANDROID_LOG_VERBOSE, ANDROID_LOG_FATAL, ANDROID_LOG_ERROR,
+                                ANDROID_LOG_WARN, ANDROID_LOG_INFO, ANDROID_LOG_DEBUG
+                                };
+#endif
+
 static void stdout_log (int channel, int level, const char *msg)
 {
 #ifndef __ANDROID__
     fprintf(stdout, "%s(%s): %s\n", level_names[level], blog_global.channels[channel].name, msg);
 #else
-    __android_log_print(ANDROID_LOG_DEBUG, "tun2socks", 
+    __android_log_print(android_log_level_map[level], "tun2socks",
             "%s(%s): %s\n", level_names[level], blog_global.channels[channel].name, msg);
 #endif
 }
@@ -64,7 +70,7 @@ static void stderr_log (int channel, int level, const char *msg)
 #ifndef __ANDROID__
     fprintf(stderr, "%s(%s): %s\n", level_names[level], blog_global.channels[channel].name, msg);
 #else
-    __android_log_print(ANDROID_LOG_ERROR, "tun2socks", 
+    __android_log_print(android_log_level_map[level], "tun2socks",
             "%s(%s): %s\n", level_names[level], blog_global.channels[channel].name, msg);
 #endif
 }
