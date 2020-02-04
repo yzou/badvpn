@@ -1218,7 +1218,9 @@ void lwip_init_job_hadler (void *unused)
 {
     ASSERT(!quitting)
     ASSERT(netif_ipaddr.type == BADDR_TYPE_IPV4)
+#ifndef __ANDROID__
     ASSERT(netif_netmask.type == BADDR_TYPE_IPV4)
+#endif
     ASSERT(!have_netif)
     ASSERT(!listener)
     ASSERT(!listener_ip6)
