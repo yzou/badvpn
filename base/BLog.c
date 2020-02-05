@@ -51,7 +51,7 @@ static char *level_names[] = { NULL, "ERROR", "WARNING", "NOTICE", "INFO", "DEBU
 
 #ifdef __ANDROID__
 static int android_log_level_map[] = {ANDROID_LOG_FATAL, ANDROID_LOG_ERROR, ANDROID_LOG_WARN,
-                                      ANDROID_LOG_WARN, ANDROID_LOG_INFO, ANDROID_LOG_DEBUG
+                                      ANDROID_LOG_INFO, ANDROID_LOG_INFO, ANDROID_LOG_DEBUG
 };
 #endif
 
